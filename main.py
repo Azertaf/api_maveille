@@ -1,68 +1,92 @@
 import requests
 import json
 from bs4 import BeautifulSoup
+from openai import OpenAI
 
-# --- CONFIGURATION ---
-API_KEY = "AIzaSyDVdrWXDaoUGSdTLOTqUk0MwhU1escnhHM"        # Remettez votre clé AIza...
-SEARCH_ENGINE_ID = "249cae3d517ff4425" # Remettez votre ID cx...
-# ---------------------
+# --- ZONE DE CONFIGURATION (VOS CLÉS) ---
+GOOGLE_API_KEY = "AIzaSyDVdrWXDaoUGSdTLOTqUk0MwhU1escnhHM"     # La clé qui commence par AIza...
+SEARCH_ENGINE_ID = "249cae3d517ff4425"        # L'ID cx...
+OPENAI_API_KEY = "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"    # La clé qui commence par sk-...
+# ----------------------------------------
 
-def rechercher_google(requete, nombre_resultats=3):
+# On initialise le cerveau (Client OpenAI)
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+def rechercher_google(requete, nombre_resultats=2):
     print(f"🔎 Recherche Google pour : {requete}...")
     url = "https://www.googleapis.com/customsearch/v1"
-    parametres = {'key': API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': requete, 'num': nombre_resultats}
-    
+    parametres = {'key': GOOGLE_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': requete, 'num': nombre_resultats}
     try:
         reponse = requests.get(url, params=parametres)
         resultats = reponse.json()
         articles = []
-        
         if 'items' in resultats:
             for item in resultats['items']:
                 articles.append({'titre': item.get('title'), 'lien': item.get('link')})
             return articles
-        else:
-            return []
+        return []
     except Exception as e:
         print(f"❌ Erreur Google : {e}")
         return []
 
 def scrapper_page(url):
-    print(f"   ⛏️  Scraping de : {url}...")
+    print(f"   ⛏️  Extraction du texte : {url}...")
     try:
-        # On se fait passer pour un navigateur classique (User-Agent)
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         reponse = requests.get(url, headers=headers, timeout=10)
-        
         if reponse.status_code == 200:
             soup = BeautifulSoup(reponse.text, 'html.parser')
-            
-            # On cherche les paragraphes <p>
+            # On prend les paragraphes
             paragraphes = soup.find_all('p')
             texte_complet = " ".join([p.text for p in paragraphes])
-            
-            # On coupe si c'est trop long (pour l'affichage)
-            resume = texte_complet[:500] + "..." 
-            return resume
-        else:
-            return "❌ Accès refusé par le site."
-    except Exception as e:
-        return f"❌ Erreur de lecture : {e}"
+            # On coupe à 3000 caractères pour ne pas payer trop cher d'IA
+            return texte_complet[:3000]
+        return None
+    except Exception:
+        return None
 
-# --- LE CHEF D'ORCHESTRE ---
+def resumer_avec_ia(texte_brut):
+    print("   🧠 L'IA réfléchit et rédige le résumé...")
+    try:
+        prompt = (
+            "Tu es un expert en veille technologique. "
+            "Voici un texte brut extrait d'un site web (qui peut être en anglais). "
+            "Fais-moi un résumé clair, en français, de 3 ou 4 phrases maximum. "
+            "Va droit au but sur les faits importants.\n\n"
+            f"TEXTE : {texte_brut}"
+        )
+        
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini", # Modèle rapide et pas cher
+            messages=[
+                {"role": "system", "content": "Tu es un assistant de synthèse."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"❌ Erreur IA : {e}"
+
+# --- LE PROGRAMME PRINCIPAL ---
 if __name__ == "__main__":
     mot_cle = "Intelligence Artificielle innovation 2024"
     
-    # 1. On cherche
+    # 1. Recherche
     articles = rechercher_google(mot_cle)
-    print(f"\n🎯 J'ai trouvé {len(articles)} articles. Début de l'extraction...\n")
+    print(f"\n🎯 {len(articles)} articles trouvés. Traitement en cours...\n")
     
-    # 2. On lit chaque article
+    # 2. Boucle sur chaque article
     for article in articles:
-        print(f"------------------------------------------------")
-        print(f"TITRE : {article['titre']}")
-        print(f"LIEN  : {article['lien']}")
+        print(f"==================================================")
+        print(f"SOURCE : {article['titre']}")
+        print(f"LIEN   : {article['lien']}")
         
-        # Le robot va lire le texte
-        contenu = scrapper_page(article['lien'])
-        print(f"\n📝 CONTENU EXTRAIT (Début) :\n{contenu}\n")
+        # 3. Extraction
+        texte_brut = scrapper_page(article['lien'])
+        
+        if texte_brut and len(texte_brut) > 500:
+            # 4. Résumé IA
+            resume = resumer_avec_ia(texte_brut)
+            print(f"\n✨ RÉSUMÉ IA :\n{resume}\n")
+        else:
+            print("⚠️ Pas assez de texte trouvé sur cette page pour résumer.")
