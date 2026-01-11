@@ -23,26 +23,38 @@ FICHIER_IND25 = "config_ind25.txt"
 def charger_liste(nom_fichier):
     if os.path.exists(nom_fichier):
         with open(nom_fichier, "r", encoding="utf-8") as f:
-            # On ignore les lignes vides
             return [line.strip() for line in f.readlines() if line.strip()]
     return []
 
 # --- OUTILS GOOGLE & IA ---
 def rechercher_google(requete):
+    # print(f"   🔎 Google : {requete}") 
     url = "https://www.googleapis.com/customsearch/v1"
+    # Limite à 5 pour Ind24, 10 pour le reste. On met 10 par défaut ici.
     parametres = {
         'key': GOOGLE_API_KEY, 
         'cx': SEARCH_ENGINE_ID, 
         'q': requete, 
-        'num': 10,             # Max résultats par requête
-        'dateRestrict': 'w1'   # Semaine dernière uniquement
+        'num': 10, 
+        'dateRestrict': 'w1'
     }
     try:
         reponse = requests.get(url, params=parametres)
         if reponse.status_code == 429:
             print("🔴 ERREUR QUOTA GOOGLE DÉPASSÉ (Activez la facturation !)")
             return []
-        return reponse.json().get('items', [])
+        
+        # --- CORRECTION DU BUG ICI ---
+        # On transforme les données brutes de Google (anglais) en format propre (français)
+        resultats_bruts = reponse.json().get('items', [])
+        articles_propres = []
+        for item in resultats_bruts:
+            articles_propres.append({
+                'titre': item.get('title'), # Google dit 'title', on veut 'titre'
+                'lien': item.get('link')    # Google dit 'link', on veut 'lien'
+            })
+        return articles_propres
+
     except Exception:
         return []
 
@@ -101,7 +113,7 @@ def traiter_theme_classique(liste_mots, indicateur_nom, num_semaine):
         contenu += f"<h3>{mot}</h3><ul>"
         items = rechercher_google(mot)
         for item in items:
-            texte = scrapper_page(item['lien'])
+            texte = scrapper_page(item['lien']) # Maintenant 'lien' existe bien !
             if texte and len(texte) > 500:
                 resume = resumer_avec_ia(texte, mot)
                 if "R.A.S" not in resume:
@@ -119,14 +131,11 @@ def traiter_ind24(liste_lignes, num_semaine):
     print(f"\n🟠 TRAITEMENT INDICATEUR 24 ({len(liste_lignes)} profils)...")
     
     for ligne in liste_lignes:
-        # On découpe la ligne par les virgules
-        # Ex: "Webmaster, Wordpress, SEO" -> ["Webmaster", "Wordpress", "SEO"]
         mots_cles = [m.strip() for m in ligne.split(',') if m.strip()]
+        if not mots_cles: continue
         
-        if not mots_cles: continue # Si ligne vide
-        
-        metier_principal = mots_cles[0] # Le premier mot est le titre du métier
-        details = ", ".join(mots_cles[1:]) # Les autres sont des précisions
+        metier_principal = mots_cles[0]
+        details = ", ".join(mots_cles[1:])
         
         print(f"   🔨 Profil : {metier_principal} (+ {len(mots_cles)-1} mots-clés)")
         
@@ -137,34 +146,24 @@ def traiter_ind24(liste_lignes, num_semaine):
         contenu += "<hr><ul>"
         
         compteur_articles_valides = 0
-        
-        # --- GÉNÉRATION INTELLIGENTE DES REQUÊTES ---
         liste_requetes = []
         
-        # 1. Requête générale
         liste_requetes.append(f"Actualité métier {metier_principal}")
         liste_requetes.append(f"Réglementation {metier_principal} nouveauté")
-        
-        # 2. Requêtes précises (Métier + Mot clé secondaire)
-        # Ex: "Actualité Webmaster Wordpress", "Nouveauté Webmaster SEO"
         for mot_secondaire in mots_cles[1:]:
             liste_requetes.append(f"Actualité {metier_principal} {mot_secondaire}")
             liste_requetes.append(f"Nouveauté {mot_secondaire} formation")
 
-        # --- LANCEMENT DES RECHERCHES ---
         for requete in liste_requetes:
-            if compteur_articles_valides >= 5: break # On s'arrête si on a assez d'infos
+            if compteur_articles_valides >= 5: break
             
-            # print(f"      🔎 Recherche : {requete}...") # Décommentez pour voir les détails
             items = rechercher_google(requete)
-            
             for item in items:
                 if compteur_articles_valides >= 5: break
                 
                 texte = scrapper_page(item['lien'])
                 if texte and len(texte) > 500:
                     resume = resumer_avec_ia(texte, f"{metier_principal} ({requete})")
-                    
                     if "R.A.S" not in resume:
                         print(f"      ✅ Trouvé : {item['titre'][:40]}...")
                         contenu += f"<li><strong>{item['titre']}</strong><br>{resume}<br><a href='{item['lien']}'>Source</a></li>"
@@ -182,15 +181,12 @@ if __name__ == "__main__":
     semaine = datetime.date.today().isocalendar()[1]
     print(f"🚀 DÉMARRAGE ROBOT VEILLE - SEMAINE {semaine}")
 
-    # Ind 23
     mots_23 = charger_liste(FICHIER_IND23)
     if mots_23: traiter_theme_classique(mots_23, "Indicateur 23 (Réglementaire)", semaine)
 
-    # Ind 25
     mots_25 = charger_liste(FICHIER_IND25)
     if mots_25: traiter_theme_classique(mots_25, "Indicateur 25 (Pédago & Tech)", semaine)
 
-    # Ind 24 (Complexe)
     lignes_24 = charger_liste(FICHIER_IND24)
     if lignes_24: traiter_ind24(lignes_24, semaine)
     
