@@ -3,10 +3,10 @@ import json
 from bs4 import BeautifulSoup
 from openai import OpenAI
 
-# --- ZONE DE CONFIGURATION (VOS CLÉS) ---
-GOOGLE_API_KEY = "AIzaSyDVdrWXDaoUGSdTLOTqUk0MwhU1escnhHM"     # La clé qui commence par AIza...
-SEARCH_ENGINE_ID = "249cae3d517ff4425"        # L'ID cx...
-OPENAI_API_KEY = "CLE_A_METTRE_SUR_LE_SERVEUR"    # La clé qui commence par sk-...
+# On importe les clés depuis le fichier secrets.py
+# (Plus besoin de les écrire ici !)
+from secrets import GOOGLE_API_KEY, SEARCH_ENGINE_ID, OPENAI_API_KEY
+
 # ----------------------------------------
 
 # On initialise le cerveau (Client OpenAI)
