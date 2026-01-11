@@ -1,21 +1,54 @@
 import requests
 import json
+import time
+import os
 from bs4 import BeautifulSoup
 from openai import OpenAI
 
-# On importe les clés depuis le fichier secrets.py
-# (Plus besoin de les écrire ici !)
-from secrets import GOOGLE_API_KEY, SEARCH_ENGINE_ID, OPENAI_API_KEY
+# --- IMPORTATION DES CLÉS SÉCURISÉES ---
+try:
+    from secrets import GOOGLE_API_KEY, SEARCH_ENGINE_ID, OPENAI_API_KEY
+except ImportError:
+    print("⚠️ ERREUR CRITIQUE : Le fichier secrets.py est introuvable !")
+    exit()
+# ---------------------------------------
 
-# ----------------------------------------
-
-# On initialise le cerveau (Client OpenAI)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def rechercher_google(requete, nombre_resultats=2):
-    print(f"🔎 Recherche Google pour : {requete}...")
+# --- CHARGEMENT DES MOTS-CLÉS EXTERNES ---
+def charger_mots_cles():
+    nom_fichier = "mots_cles.txt"
+    liste = []
+    
+    if os.path.exists(nom_fichier):
+        with open(nom_fichier, "r", encoding="utf-8") as f:
+            # On lit chaque ligne et on enlève les espaces vides
+            lignes = f.readlines()
+            for ligne in lignes:
+                mot_propre = ligne.strip()
+                if mot_propre: # Si la ligne n'est pas vide
+                    liste.append(mot_propre)
+        print(f"📋 Configuration chargée : {len(liste)} thèmes trouvés dans {nom_fichier}.")
+        return liste
+    else:
+        print(f"⚠️ ATTENTION : Fichier {nom_fichier} introuvable.")
+        print("   -> Utilisation de la liste de secours par défaut.")
+        return ["Veille juridique formation professionnelle"] # Liste de secours
+
+# On initialise la liste au démarrage
+LISTE_MOTS_CLES = charger_mots_cles()
+# -----------------------------------------
+
+def rechercher_google(requete):
+    print(f"🔎 Recherche (7 jours) : {requete}...")
     url = "https://www.googleapis.com/customsearch/v1"
-    parametres = {'key': GOOGLE_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': requete, 'num': nombre_resultats}
+    parametres = {
+        'key': GOOGLE_API_KEY, 
+        'cx': SEARCH_ENGINE_ID, 
+        'q': requete, 
+        'num': 10, 
+        'dateRestrict': 'w1'
+    }
     try:
         reponse = requests.get(url, params=parametres)
         resultats = reponse.json()
@@ -30,63 +63,69 @@ def rechercher_google(requete, nombre_resultats=2):
         return []
 
 def scrapper_page(url):
-    print(f"   ⛏️  Extraction du texte : {url}...")
+    print(f"   ⛏️  Lecture : {url[:60]}...")
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
-        reponse = requests.get(url, headers=headers, timeout=10)
+        reponse = requests.get(url, headers=headers, timeout=5)
         if reponse.status_code == 200:
             soup = BeautifulSoup(reponse.text, 'html.parser')
-            # On prend les paragraphes
-            paragraphes = soup.find_all('p')
-            texte_complet = " ".join([p.text for p in paragraphes])
-            # On coupe à 3000 caractères pour ne pas payer trop cher d'IA
-            return texte_complet[:3000]
+            for script in soup(["script", "style"]):
+                script.extract()
+            texte = soup.get_text()
+            lines = (line.strip() for line in texte.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            texte_propre = '\n'.join(chunk for chunk in chunks if chunk)
+            return texte_propre[:4000]
         return None
     except Exception:
         return None
 
-def resumer_avec_ia(texte_brut):
-    print("   🧠 L'IA réfléchit et rédige le résumé...")
+def resumer_avec_ia(texte_brut, contexte):
     try:
         prompt = (
-            "Tu es un expert en veille technologique. "
-            "Voici un texte brut extrait d'un site web (qui peut être en anglais). "
-            "Fais-moi un résumé clair, en français, de 3 ou 4 phrases maximum. "
-            "Va droit au but sur les faits importants.\n\n"
+            f"CONTEXTE : Veille Qualiopi. Sujet : {contexte}. \n"
+            "TÂCHE : Résume en 1 phrase l'info clé. Si hors-sujet ou pub, réponds 'R.A.S'.\n\n"
             f"TEXTE : {texte_brut}"
         )
-        
         completion = client.chat.completions.create(
-            model="gpt-4o-mini", # Modèle rapide et pas cher
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Tu es un assistant de synthèse."},
+                {"role": "system", "content": "Tu es concis."},
                 {"role": "user", "content": prompt}
             ]
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"❌ Erreur IA : {e}"
+        return f"Erreur IA : {e}"
 
-# --- LE PROGRAMME PRINCIPAL ---
+# --- PROGRAMME PRINCIPAL ---
 if __name__ == "__main__":
-    mot_cle = "Intelligence Artificielle innovation 2024"
+    if not LISTE_MOTS_CLES:
+        print("⛔ Aucun mot-clé à traiter. Arrêt.")
+        exit()
+
+    print(f"🚀 DÉMARRAGE DE LA VEILLE SUR {len(LISTE_MOTS_CLES)} SUJETS\n")
     
-    # 1. Recherche
-    articles = rechercher_google(mot_cle)
-    print(f"\n🎯 {len(articles)} articles trouvés. Traitement en cours...\n")
+    compteur_total = 0
     
-    # 2. Boucle sur chaque article
-    for article in articles:
+    for mot_cle in LISTE_MOTS_CLES:
         print(f"==================================================")
-        print(f"SOURCE : {article['titre']}")
-        print(f"LIEN   : {article['lien']}")
+        print(f"📂 THÈME : {mot_cle.upper()}")
         
-        # 3. Extraction
-        texte_brut = scrapper_page(article['lien'])
+        articles = rechercher_google(mot_cle)
+        print(f"   -> {len(articles)} articles récents.")
         
-        if texte_brut and len(texte_brut) > 500:
-            # 4. Résumé IA
-            resume = resumer_avec_ia(texte_brut)
-            print(f"\n✨ RÉSUMÉ IA :\n{resume}\n")
-        else:
-            print("⚠️ Pas assez de texte trouvé sur cette page pour résumer.")
+        for article in articles:
+            texte = scrapper_page(article['lien'])
+            
+            if texte and len(texte) > 500:
+                resume = resumer_avec_ia(texte, mot_cle)
+                if "R.A.S" not in resume and "Erreur" not in resume:
+                    print(f"\n✅ {article['titre']}")
+                    print(f"🔗 {article['lien']}")
+                    print(f"💡 {resume}\n")
+                    compteur_total += 1
+            time.sleep(1)
+        time.sleep(2)
+
+    print(f"\n🏁 FIN. {compteur_total} résumés générés.")
